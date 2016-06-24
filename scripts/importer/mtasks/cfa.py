@@ -10,7 +10,8 @@ from astropy.time import Time as astrotime
 
 from scripts import PATH
 from .. import Events
-from .. funcs import add_photometry, add_spectrum, clean_snname, get_preferred_name, jd_to_mjd, uniq_cdl
+from .. funcs import add_photometry, add_spectrum, \
+    clean_snname, get_preferred_name, jd_to_mjd, uniq_cdl
 from .. constants import ACKN_CFA, TRAVIS_QUERY_LIMIT
 from ... utils import pbar, pbar_strings, is_number
 

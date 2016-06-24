@@ -6,7 +6,9 @@ from glob import glob
 import os
 
 from scripts import PATH
-from .. funcs import add_photometry, add_spectrum, clean_snname, get_preferred_name, jd_to_mjd
+from .. import Events
+from .. funcs import add_photometry, add_spectrum, \
+    clean_snname, get_preferred_name, jd_to_mjd
 from .. constants import TRAVIS_QUERY_LIMIT
 from ... utils import pbar_strings
 

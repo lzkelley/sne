@@ -10,6 +10,7 @@ import urllib
 
 from scripts import PATH
 from .. constants import TRAVIS_QUERY_LIMIT
+from .. import Events
 from .. funcs import add_photometry, add_spectrum, load_cached_url, uniq_cdl
 from ... utils import get_sig_digits, pbar, pretty_num
 
@@ -29,12 +30,12 @@ def do_ucb_photo(events, stubs, args, tasks, task_obj, log):
     photom = json.loads(jsontxt)
     photom = sorted(photom, key=lambda kk: kk['ObjName'])
     for phot in pbar(photom, desc=current_task):
-        name = phot['ObjName']
-        events, name = Events.add_event(tasks, args, events, name, log)
+        oldname = phot['ObjName']
+        events, name = Events.add_event(tasks, args, events, oldname, log)
 
         sec_source = events[name].add_source(srcname=sec_ref, url=sec_refurl, bibcode=sec_refbib,
                                 secondary=True)
-        events[name].add_quantity('alias', name, sec_source)
+        events[name].add_quantity('alias', oldname, sec_source)
         sources = [sec_source]
         if phot['Reference']:
             sources += [events[name].add_source(bibcode=phot['Reference'])]

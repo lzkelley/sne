@@ -31,7 +31,9 @@ from copy import deepcopy
 from collections import OrderedDict
 from bokeh.plotting import Figure, show, save, reset_output
 from bokeh.models import (HoverTool, CustomJS, Slider, ColumnDataSource,
-                          HBox, VBox, Range1d, LinearAxis, DatetimeAxis)
+                          HBox, VBox, Range1d, LinearAxis, DatetimeAxis,
+                          Paragraph)
+from bokeh.models.widgets import Select
 from bokeh.resources import CDN, INLINE
 from bokeh.embed import file_html, components
 from palettable import cubehelix
@@ -41,13 +43,15 @@ from statistics import mean
 from tq import *
 
 parser = argparse.ArgumentParser(description='Generate a catalog JSON file and plot HTML files from SNE data.')
-parser.add_argument('--no-write-catalog', '-nwc', dest='writecatalog', help='Don\'t write catalog file',          default=True, action='store_false')
-parser.add_argument('--no-write-html', '-nwh',    dest='writehtml',    help='Don\'t write html plot files',       default=True, action='store_false')
-parser.add_argument('--no-collect-hosts', '-nch', dest='collecthosts', help='Don\'t collect host galaxy images',  default=True, action='store_false')
-parser.add_argument('--force-html', '-fh',        dest='forcehtml',    help='Force write html plot files',        default=False, action='store_true')
-parser.add_argument('--event-list', '-el',        dest='eventlist',    help='Process a list of events',           default=[], type=str, nargs='+')
-parser.add_argument('--test', '-te',              dest='test',         help='Test this script',                   default=False, action='store_true')
-parser.add_argument('--travis', '-tr',            dest='travis',       help='Set some options when using Travis', default=False, action='store_true')
+parser.add_argument('--no-write-catalog', '-nwc', dest='writecatalog',  help='Don\'t write catalog file',          default=True, action='store_false')
+parser.add_argument('--no-write-html', '-nwh',    dest='writehtml',     help='Don\'t write html plot files',       default=True, action='store_false')
+parser.add_argument('--no-collect-hosts', '-nch', dest='collecthosts',  help='Don\'t collect host galaxy images',  default=True, action='store_false')
+parser.add_argument('--force-html', '-fh',        dest='forcehtml',     help='Force write html plot files',        default=False, action='store_true')
+parser.add_argument('--event-list', '-el',        dest='eventlist',     help='Process a list of events',           default=[], type=str, nargs='+')
+parser.add_argument('--test', '-te',              dest='test',          help='Test this script',                   default=False, action='store_true')
+parser.add_argument('--travis', '-tr',            dest='travis',        help='Set some options when using Travis', default=False, action='store_true')
+parser.add_argument('--boneyard', '-by',          dest='boneyard',      help='Make "boneyard" catalog',            default=False, action='store_true')
+parser.add_argument('--delete-orphans', '-do',    dest='deleteorphans', help='Delete orphan JSON files',           default=False, action='store_true')
 args = parser.parse_args()
 
 infl = inflect.engine()
@@ -55,7 +59,7 @@ infl.defnoun("spectrum", "spectra")
 
 outdir = "../"
 
-travislimit = 1000
+travislimit = 100
 
 radiosigma = 3.0
 
@@ -80,7 +84,8 @@ columnkey = [
     "dec",
     "hostra",
     "hostdec",
-    "hostoffset",
+    "hostoffsetang",
+    "hostoffsetdist",
     "instruments",
     "redshift",
     "velocity",
@@ -113,7 +118,8 @@ header = [
     "Dec.",
     "Host R.A.",
     "Host Dec.",
-    "Host Offset (')",
+    "Host Offset (\")",
+    "Host Offset (kpc)",
     "Instruments/Bands",
     r"<em>z</em>",
     r"<em>v</em><sub>&#9737;</sub> (km/s)",
@@ -142,7 +148,8 @@ eventpageheader = [
     "Dec.",
     "Host R.A.",
     "Host Dec.",
-    "Host Offset (')",
+    "Host Offset (\")",
+    "Host Offset (kpc)",
     "Instruments/Bands",
     r"<em>z</em>",
     r"<em>v</em><sub>&#9737;</sub> (km/s)",
@@ -171,7 +178,8 @@ titles = [
     "Supernova J2000 Declination (d:m:s)",
     "Host J2000 Right Ascension (h:m:s)",
     "Host J2000 Declination (d:m:s)",
-    "Host Offset (Arcminutes)",
+    "Host Offset (Arcseconds)",
+    "Host Offset (kpc)",
     "List of Instruments and Bands",
     "Redshift",
     "Heliocentric velocity (km/s)",
@@ -215,48 +223,8 @@ newfiletemplate = (
 }'''
 )
 
-sitemaptemplate = (
-'''<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"> 
-  <url>
-    <loc>https://sne.space</loc>
-    <priority>1.0</priority>
-    <changefreq>daily</changefreq>
-  </url>
-  <url>
-    <loc>https://sne.space/about</loc>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/contribute</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/find-duplicates</loc>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/derivations</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/statistics</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/download</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/bibliography</loc>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://sne.space/links</loc>
-    <priority>0.7</priority>
-  </url>
-{0}</urlset>'''
-)
+with open('sitemap-template.xml', 'r') as f:
+    sitemaptemplate = f.read()
 
 if len(columnkey) != len(header):
     raise ValueError('Header not same length as key list.')
@@ -347,7 +315,7 @@ if os.path.isfile(outdir + 'hostimgs.json'):
 else:
     hostimgdict = {}
 
-files = repo_file_list(bones = False)
+files = repo_file_list(normal = (not args.boneyard), bones = args.boneyard)
 
 md5s = []
 if os.path.isfile(outdir + 'md5s.json'):
@@ -394,13 +362,6 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
         for d, date in enumerate(catalog[entry]['maxdate']):
             catalog[entry]['maxdate'][d]['value'] = catalog[entry]['maxdate'][d]['value'].split('.')[0]
 
-    if all([x in catalog[entry] for x in ['ra', 'dec', 'hostra', 'hostdec']]):
-        c1 = coord(ra=catalog[entry]['ra'][0]['value'], dec=catalog[entry]['dec'][0]['value'], unit=(un.hourangle, un.deg))
-        c2 = coord(ra=catalog[entry]['hostra'][0]['value'], dec=catalog[entry]['hostdec'][0]['value'], unit=(un.hourangle, un.deg))
-        catalog[entry]['hostoffset'] = pretty_num(hypot(c1.ra.degree - c2.ra.degree, c1.dec.degree - c2.dec.degree)*60.)
-    else:
-        catalog[entry]['hostoffset'] = ''
-
     hostmag = ''
     hosterr = ''
     if 'photometry' in catalog[entry]:
@@ -429,6 +390,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
     numspectra = len(catalog[entry]['spectra']) if spectraavail else 0
 
     redshiftfactor = (1.0 / (1.0 + float(catalog[entry]['redshift'][0]['value']))) if ('redshift' in catalog[entry]) else 1.0
+    dayframe = 'Rest frame days' if 'redshift' in catalog[entry] else 'Observer frame days'
 
     mjdmax = ''
     if 'maxdate' in catalog[entry]:
@@ -554,6 +516,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
         photosource = [', '.join(str(j) for j in sorted(int(i) for i in x['source'].split(',')))
             for x in catalog[entry]['photometry'] if 'magnitude' in x]
         phototype = [(x['upperlimit'] if 'upperlimit' in x else False) for x in catalog[entry]['photometry'] if 'magnitude' in x]
+        photocorr = [('k' if 'kcorrected' in x else 'raw') for x in catalog[entry]['photometry'] if 'magnitude' in x]
 
         hastimeerrs = (len(list(filter(None, phototimelowererrs))) and len(list(filter(None, phototimeuppererrs))))
         hasABerrs = (len(list(filter(None, photoABlowererrs))) and len(list(filter(None, photoABuppererrs))))
@@ -599,7 +562,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
             min_xm_range = (min_x_range - mjdmax) * redshiftfactor
             max_xm_range = (max_x_range - mjdmax) * redshiftfactor
             p1.extra_x_ranges["time since max"] = Range1d(start=min_xm_range, end=max_xm_range)
-            p1.add_layout(LinearAxis(axis_label = "Time since max (Rest frame days)", major_label_text_font_size = '8pt',
+            p1.add_layout(LinearAxis(axis_label = "Time since max (" + dayframe + ")", major_label_text_font_size = '8pt',
                 major_label_text_font = 'futura', axis_label_text_font = 'futura',
                 x_range_name = "time since max", axis_label_text_font_size = '11pt'), 'above')
 
@@ -627,87 +590,129 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
         bandset = set(photoband)
         bandset = [i for (j, i) in sorted(list(zip(list(map(bandaliasf, bandset)), bandset)))]
 
-        for band in bandset:
-            bandname = bandaliasf(band)
-            indb = [i for i, j in enumerate(photoband) if j == band]
-            indt = [i for i, j in enumerate(phototype) if not j]
-            indnex = [i for i, j in enumerate(phototimelowererrs) if j == 0.]
-            indyex = [i for i, j in enumerate(phototimelowererrs) if j > 0.]
-            indney = [i for i, j in enumerate(photoABuppererrs) if j == 0.]
-            indyey = [i for i, j in enumerate(photoABuppererrs) if j > 0.]
-            indne = set(indb).intersection(indt).intersection(indney).intersection(indnex)
-            indye = set(indb).intersection(indt).intersection(set(indyey).union(indyex))
+        sources = []
+        corrects = ['raw', 'k']
+        glyphs = [[] for x in range(len(corrects))]
+        for ci, corr in enumerate(corrects):
+            for band in bandset:
+                bandname = bandaliasf(band)
+                indb = [i for i, j in enumerate(photoband) if j == band]
+                indt = [i for i, j in enumerate(phototype) if not j]
+                indnex = [i for i, j in enumerate(phototimelowererrs) if j == 0.]
+                indyex = [i for i, j in enumerate(phototimelowererrs) if j > 0.]
+                indney = [i for i, j in enumerate(photoABuppererrs) if j == 0.]
+                indyey = [i for i, j in enumerate(photoABuppererrs) if j > 0.]
+                indc = [i for i, j in enumerate(photocorr) if j == corr]
+                indne = set(indb).intersection(indt).intersection(indc).intersection(indney).intersection(indnex)
+                indye = set(indb).intersection(indt).intersection(indc).intersection(set(indyey).union(indyex))
 
-            noerrorlegend = bandname if len(indne) == 0 else ''
+                noerrorlegend = bandname if len(indne) == 0 else ''
 
-            data = dict(
-                x = [phototime[i] for i in indne],
-                y = [photoAB[i] for i in indne],
-                lerr = [photoABlowererrs[i] for i in indne],
-                uerr = [photoABuppererrs[i] for i in indne],
-                desc = [photoband[i] for i in indne],
-                instr = [photoinstru[i] for i in indne],
-                src = [photosource[i] for i in indne]
-            )
-            if 'maxabsmag' in catalog[entry] and 'maxappmag' in catalog[entry]:
-                data['yabs'] = [photoAB[i] - distancemod for i in indne]
-            if hastimeerrs:
-                data['xle'] = [phototimelowererrs[i] for i in indne]
-                data['xue'] = [phototimeuppererrs[i] for i in indne]
+                data = dict(
+                    x = [phototime[i] for i in indne],
+                    y = [photoAB[i] for i in indne],
+                    lerr = [photoABlowererrs[i] for i in indne],
+                    uerr = [photoABuppererrs[i] for i in indne],
+                    desc = [photoband[i] for i in indne],
+                    instr = [photoinstru[i] for i in indne],
+                    src = [photosource[i] for i in indne]
+                )
+                if 'maxabsmag' in catalog[entry] and 'maxappmag' in catalog[entry]:
+                    data['yabs'] = [photoAB[i] - distancemod for i in indne]
+                if hastimeerrs:
+                    data['xle'] = [phototimelowererrs[i] for i in indne]
+                    data['xue'] = [phototimeuppererrs[i] for i in indne]
 
-            source = ColumnDataSource(data)
-            p1.circle('x', 'y', source = source, color=bandcolorf(band), fill_color="white", legend=noerrorlegend, size=4)
+                sources.append(ColumnDataSource(data))
+                glyphs[ci].append(p1.circle('x', 'y', source = sources[-1], color=bandcolorf(band), fill_color="white", legend=noerrorlegend, size=4).glyph)
 
-            data = dict(
-                x = [phototime[i] for i in indye],
-                y = [photoAB[i] for i in indye],
-                lerr = [photoABlowererrs[i] for i in indye],
-                uerr = [photoABuppererrs[i] for i in indye],
-                desc = [photoband[i] for i in indye],
-                instr = [photoinstru[i] for i in indye],
-                src = [photosource[i] for i in indye]
-            )
-            if 'maxabsmag' in catalog[entry] and 'maxappmag' in catalog[entry]:
-                data['yabs'] = [photoAB[i] - distancemod for i in indye]
-            if hastimeerrs:
-                data['xle'] = [phototimelowererrs[i] for i in indye]
-                data['xue'] = [phototimeuppererrs[i] for i in indye]
+                data = dict(
+                    x = [phototime[i] for i in indye],
+                    y = [photoAB[i] for i in indye],
+                    lerr = [photoABlowererrs[i] for i in indye],
+                    uerr = [photoABuppererrs[i] for i in indye],
+                    desc = [photoband[i] for i in indye],
+                    instr = [photoinstru[i] for i in indye],
+                    src = [photosource[i] for i in indye]
+                )
+                if 'maxabsmag' in catalog[entry] and 'maxappmag' in catalog[entry]:
+                    data['yabs'] = [photoAB[i] - distancemod for i in indye]
+                if hastimeerrs:
+                    data['xle'] = [phototimelowererrs[i] for i in indye]
+                    data['xue'] = [phototimeuppererrs[i] for i in indye]
 
-            source = ColumnDataSource(data)
-            p1.multi_line([err_xs[x] for x in indye], [[ys[x], ys[x]] for x in indye], color=bandcolorf(band))
-            p1.multi_line([[xs[x], xs[x]] for x in indye], [err_ys[x] for x in indye], color=bandcolorf(band))
-            p1.circle('x', 'y', source = source, color=bandcolorf(band), legend=bandname, size=4)
+                sources.append(ColumnDataSource(data))
+                glyphs[ci].append(p1.multi_line([err_xs[x] for x in indye], [[ys[x], ys[x]] for x in indye], color=bandcolorf(band)).glyph)
+                glyphs[ci].append(p1.multi_line([[xs[x], xs[x]] for x in indye], [err_ys[x] for x in indye], color=bandcolorf(band)).glyph)
+                glyphs[ci].append(p1.circle('x', 'y', source = sources[-1], color=bandcolorf(band), legend=bandname, size=4).glyph)
 
-            upplimlegend = bandname if len(indye) == 0 and len(indne) == 0 else ''
+                upplimlegend = bandname if len(indye) == 0 and len(indne) == 0 else ''
 
-            indt = [i for i, j in enumerate(phototype) if j]
-            ind = set(indb).intersection(indt)
-            data = dict(
-                x = [phototime[i] for i in ind],
-                y = [photoAB[i] for i in ind],
-                lerr = [photoABlowererrs[i] for i in ind],
-                uerr = [photoABuppererrs[i] for i in ind],
-                desc = [photoband[i] for i in ind],
-                instr = [photoinstru[i] for i in ind],
-                src = [photosource[i] for i in ind]
-            )
-            if 'maxabsmag' in catalog[entry] and 'maxappmag' in catalog[entry]:
-                data['yabs'] = [photoAB[i] - distancemod for i in ind]
-            if hastimeerrs:
-                data['xle'] = [phototimelowererrs[i] for i in ind]
-                data['xue'] = [phototimeuppererrs[i] for i in ind]
+                indt = [i for i, j in enumerate(phototype) if j]
+                ind = set(indb).intersection(indt)
+                data = dict(
+                    x = [phototime[i] for i in ind],
+                    y = [photoAB[i] for i in ind],
+                    lerr = [photoABlowererrs[i] for i in ind],
+                    uerr = [photoABuppererrs[i] for i in ind],
+                    desc = [photoband[i] for i in ind],
+                    instr = [photoinstru[i] for i in ind],
+                    src = [photosource[i] for i in ind]
+                )
+                if 'maxabsmag' in catalog[entry] and 'maxappmag' in catalog[entry]:
+                    data['yabs'] = [photoAB[i] - distancemod for i in ind]
+                if hastimeerrs:
+                    data['xle'] = [phototimelowererrs[i] for i in ind]
+                    data['xue'] = [phototimeuppererrs[i] for i in ind]
 
-            source = ColumnDataSource(data)
-            # Currently Bokeh doesn't support tooltips for inverted_triangle, so hide an invisible circle behind for the tooltip
-            p1.circle('x', 'y', source = source, alpha=0.0, size=7)
-            p1.inverted_triangle('x', 'y', source = source,
-                color=bandcolorf(band), legend=upplimlegend, size=7)
+                sources.append(ColumnDataSource(data))
+                # Currently Bokeh doesn't support tooltips for inverted_triangle, so hide an invisible circle behind for the tooltip
+                glyphs[ci].append(p1.circle('x', 'y', source = sources[-1], alpha=0.0, size=7).glyph)
+                glyphs[ci].append(p1.inverted_triangle('x', 'y', source = sources[-1],
+                    color=bandcolorf(band), legend=upplimlegend, size=7).glyph)
+
+                for gi, gly in enumerate(glyphs[ci]):
+                    if corr != 'raw':
+                        glyphs[ci][gi].visible = False
 
         p1.legend.label_text_font = 'futura'
         p1.legend.label_text_font_size = '8pt'
         p1.legend.label_width = 20
         p1.legend.label_height = 14
         p1.legend.glyph_height = 14
+
+        if any([x != 'raw' for x in photocorr]):
+            photodicts = {}
+            for ci, corr in enumerate(corrects):
+                for gi, gly in enumerate(glyphs[ci]):
+                    photodicts[corr + str(gi)] = gly
+            sdicts = dict(zip(['s'+str(x) for x in range(len(sources))], sources))
+            photodicts.update(sdicts)
+            photocallback = CustomJS(args=photodicts, code="""
+                var show = 'all';
+                if (cb_obj.get('value') == 'Raw') {
+                    show = 'raw';
+                } else if (cb_obj.get('value') == 'K-Corrected') {
+                    show = 'k';
+                }
+                var viz = (show == 'all') ? true : false;
+                var corrects = ["raw", "k"];
+                for (c = 0; c < """ + str(len(corrects)) + """; c++) {
+                    for (g = 0; g < """ + str(len(glyphs[0])) + """; g++) {
+                        if (show == 'all' || corrects[c] != show) {
+                            eval(corrects[c] + g).attributes.visible = viz;
+                        } else if (show != 'all' || corrects[c] == show) {
+                            eval(corrects[c] + g).attributes.visible = !viz;
+                        }
+                    }
+                }
+                for (s = 0; s < """ + str(len(sources)) + """; s++) {
+                    eval('s'+s).trigger('change');
+                }
+            """)
+            photochecks = HBox(Paragraph(text = "Photometry to show:"), Select(value="Raw", options=["Raw", "K-Corrected", "All"], callback = photocallback))
+        else:
+            photochecks = ''
 
     if spectraavail and dohtml and args.writehtml:
         spectrumwave = []
@@ -986,7 +991,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
             min_xm_range = (min_x_range - mjdmax) * redshiftfactor
             max_xm_range = (max_x_range - mjdmax) * redshiftfactor
             p3.extra_x_ranges["time since max"] = Range1d(start=min_xm_range, end=max_xm_range)
-            p3.add_layout(LinearAxis(axis_label = "Time since max (Rest frame days)", major_label_text_font_size = '8pt',
+            p3.add_layout(LinearAxis(axis_label = "Time since max (" + dayframe + ")", major_label_text_font_size = '8pt',
                 major_label_text_font = 'futura', axis_label_text_font = 'futura',
                 x_range_name = "time since max", axis_label_text_font_size = '11pt'), 'above')
 
@@ -1179,7 +1184,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
             min_xm_range = (min_x_range - mjdmax) * redshiftfactor
             max_xm_range = (max_x_range - mjdmax) * redshiftfactor
             p4.extra_x_ranges["time since max"] = Range1d(start=min_xm_range, end=max_xm_range)
-            p4.add_layout(LinearAxis(axis_label = "Time since max (Rest frame days)", major_label_text_font_size = '8pt',
+            p4.add_layout(LinearAxis(axis_label = "Time since max (" + dayframe + ")", major_label_text_font_size = '8pt',
                 major_label_text_font = 'futura', axis_label_text_font = 'futura',
                 x_range_name = "time since max", axis_label_text_font_size = '11pt'), 'above')
 
@@ -1381,38 +1386,43 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
             if imgsrc == 'SDSS':
                 hostimgs.append([eventname, 'SDSS'])
                 skyhtml = ('<a href="http://skyserver.sdss.org/DR12/en/tools/chart/navi.aspx?opt=G&ra='
-                    + str(c.ra.deg) + '&dec=' + str(c.dec.deg) + '&scale=0.15"><img style="margin:5px;" src="' + fileeventname + '-host.jpg" width=250></a>')
+                    + str(c.ra.deg) + '&dec=' + str(c.dec.deg) + '&scale=0.15"><img src="' + fileeventname + '-host.jpg" width=250></a>')
             elif imgsrc == 'DSS':
                 hostimgs.append([eventname, 'DSS'])
                 url = ("http://skyview.gsfc.nasa.gov/current/cgi/runquery.pl?Position=" + str(urllib.parse.quote_plus(snra + " " + sndec)) +
                        "&coordinates=J2000&coordinates=&projection=Tan&pixels=500&size=" + str(dssimagescale) + "float=on&scaling=Log&resolver=SIMBAD-NED" +
                        "&Sampler=_skip_&Deedger=_skip_&rotation=&Smooth=&lut=colortables%2Fb-w-linear.bin&PlotColor=&grid=_skip_&gridlabels=1" +
                        "&catalogurl=&CatalogIDs=on&RGB=1&survey=DSS2+IR&survey=DSS2+Red&survey=DSS2+Blue&IOSmooth=&contour=&contourSmooth=&ebins=null")
-                skyhtml = ('<a href="' + url + '"><img style="margin:5px;" src="' + fileeventname + '-host.jpg" width=250></a>')
+                skyhtml = ('<a href="' + url + '"><img src="' + fileeventname + '-host.jpg" width=250></a>')
         else:
             hostimgs.append([eventname, 'None'])
 
     if dohtml and args.writehtml:
     #if (photoavail and spectraavail) and dohtml and args.writehtml:
+        if photoavail:
+            if photochecks:
+                p1box = VBox(p1,photochecks)
+            else:
+                p1box = p1
         if photoavail and spectraavail and radioavail and xrayavail:
-            p = VBox(HBox(p1,VBox(p2,HBox(binslider,spacingslider))),HBox(p3,p4))
+            p = VBox(HBox(p1box,VBox(p2,HBox(binslider,spacingslider))),HBox(p3,p4))
         elif photoavail and spectraavail and xrayavail:
-            p = VBox(HBox(p1,VBox(p2,HBox(binslider,spacingslider))),p4)
+            p = VBox(HBox(p1box,VBox(p2,HBox(binslider,spacingslider))),p4)
         elif photoavail and spectraavail and radioavail:
-            p = VBox(HBox(p1,VBox(p2,HBox(binslider,spacingslider))),p3)
+            p = VBox(HBox(p1box,VBox(p2,HBox(binslider,spacingslider))),p3)
         elif photoavail and radioavail and xrayavail:
-            p = VBox(HBox(p1,p3),p4)
+            p = VBox(HBox(p1box,p3),p4)
         elif spectraavail and radioavail and xrayavail:
             p = VBox(VBox(p2,HBox(binslider,spacingslider)),HBox(p3,p4))
         elif photoavail and spectraavail:
-            p = HBox(p1,VBox(p2,HBox(binslider,spacingslider)))
+            p = HBox(p1box,VBox(p2,HBox(binslider,spacingslider)))
             #script, div = components(dict(p1=p1, p2=p2))#, binslider=binslider, spacingslider=spacingslider))
         elif photoavail and radioavail:
-            p = HBox(p1,p3)
+            p = HBox(p1box,p3)
         elif spectraavail and radioavail:
             p = HBox(p3,VBox(p2,HBox(binslider,spacingslider)))
         elif photoavail:
-            p = p1
+            p = p1box
             #script, div = components(dict(p1=p1))
         elif spectraavail:
             p = VBox(HBox(p2,VBox(binslider,spacingslider)), width=900)
@@ -1451,9 +1461,15 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
             </script>'''
             , html)
 
-        repfolder = get_repo_folder_for_year(catalog[entry])
-        html = re.sub(r'(\<\/body\>)', '<div style="width:100%; text-align:center;">' + r'<a class="event-download" href="' +
-            linkdir + fileeventname + r'.json" download>' + r'Click to download all data for ' + eventname + ' in JSON format' +
+        repfolder = get_rep_folder_for_year(catalog[entry])
+        html = re.sub(r'(\<\/body\>)', '<div class="event-download">' + r'<a href="' +
+            linkdir + fileeventname + r'.json" download>' + r'Download all data for ' + eventname + 
+            r'</a></div>\n\1', html)
+        issueargs = '?title=' + ('[' + eventname + '] <Descriptive issue title>').encode('ascii', 'xmlcharrefreplace').decode("utf-8") + '&body=' + \
+            ('Please describe the issue with ' + eventname +'\'s data here, be as descriptive as possible! ' +
+             'If you believe the issue appears in other events as well, please identify which other events the issue possibly extends to.').encode('ascii', 'xmlcharrefreplace').decode("utf-8")
+        html = re.sub(r'(\<\/body\>)', '<div class="event-issue">' + r'<a href="https://github.com/astrocatalogs/sne/issues/new' +
+            issueargs + r'" target="_blank">' + r'Report an issue with ' + eventname +
             r'</a></div>\n\1', html)
 
         newhtml = r'<div class="event-tab-div"><h3 class="event-tab-title">Event metadata</h3><table class="event-table"><tr><th width=100px class="event-cell">Quantity</th><th class="event-cell">Value<sup>Sources</sup> [Kind]</th></tr>\n'
@@ -1469,7 +1485,8 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
                             if len(keysplit) == 3:
                                 keyhtml = keyhtml + '<br>[' + keysplit[1] + ' – ' + keysplit[2] + ' days from max]'
                     else:
-                        keyhtml = keyhtml + re.sub('<[^<]+?>', '', catalog[entry][key])
+                        subentry = re.sub('<[^<]+?>', '', catalog[entry][key])
+                        keyhtml = keyhtml + subentry
                 else:
                     for r, row in enumerate(catalog[entry][key]):
                         if 'value' in row and 'source' in row:
@@ -1477,18 +1494,19 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
                             sourcehtml = ''
                             sourcecsv = ','.join(sources)
                             for s, source in enumerate(sources):
-                                if source == 'D':
-                                    sourcehtml = sourcehtml + (',' if s > 0 else '') + source
-                                else:
-                                    sourcehtml = sourcehtml + (',' if s > 0 else '') + r'<a href="#source' + source + r'">' + source + r'</a>'
+                                sourcehtml = sourcehtml + (', ' if s > 0 else '') + r'<a href="#source' + source + r'">' + source + r'</a>'
                             keyhtml = keyhtml + (r'<br>' if r > 0 else '')
                             keyhtml = keyhtml + "<div class='singletooltip'>"
+                            if 'derived' in row and row['derived']:
+                                keyhtml = keyhtml + '<span class="derived">'
                             keyhtml = keyhtml + row['value']
                             if ((key == 'maxdate' or key == 'maxabsmag' or key == 'maxappmag') and 'maxband' in catalog[entry]
                                 and catalog[entry]['maxband']):
                                 keyhtml = keyhtml + r' [' + catalog[entry]['maxband'][0]['value'] + ']'
                             if 'error' in row:
                                 keyhtml = keyhtml + r' ± ' + row['error']
+                            if 'derived' in row and row['derived']:
+                                keyhtml = keyhtml + '</span>'
 
                             # Mark erroneous button
                             sourceids = []
@@ -1508,8 +1526,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
                             keyhtml = (keyhtml + "<span class='singletooltiptext'><button class='singlemarkerror' type='button' onclick='markError(\"" +
                                 entry + "\", \"" + key + "\", \"" + ','.join(idtypes) +
                                 "\", \"" + ','.join(sourceids) + "\", \"" + edit + "\")'>Flag as erroneous</button></span>");
-                            keyhtml = keyhtml + r'<sup>' + sourcehtml + r'</sup>'
-                            keyhtml = keyhtml + "</div>"
+                            keyhtml = keyhtml + r'</div><sup>' + sourcehtml + r'</sup>'
                         elif isinstance(row, str):
                             keyhtml = keyhtml + (r'<br>' if r > 0 else '') + row.strip()
 
@@ -1518,7 +1535,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
                         r'</td><td width=250px class="event-cell">' + keyhtml)
 
                 newhtml = newhtml + r'</td></tr>\n'
-        newhtml = newhtml + r'</table></div>\n\1'
+        newhtml = newhtml + r'</table><em>Values that are colored <span class="derived">purple</span> were computed by the OSC using values provided by the specified sources.</em></div>\n\1'
         html = re.sub(r'(\<\/body\>)', newhtml, html)
 
         if 'sources' in catalog[entry] and len(catalog[entry]['sources']):
@@ -1618,7 +1635,7 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
             else:
                 catalogcopy[entry][col] = None
 
-        del catalog[entry]
+    del catalog[entry]
 
     if args.test and spectraavail and photoavail:
         break
@@ -1627,95 +1644,102 @@ for fcnt, eventfile in enumerate(tq(sorted(files, key=lambda s: s.lower()))):
 if args.writecatalog and not args.eventlist:
     catalog = catalogcopy
 
-    #Write the MD5 checksums
-    jsonstring = json.dumps(md5s, indent='\t', separators=(',',':'))
-    with open(outdir + 'md5s.json' + testsuffix, 'w') as f:
-        f.write(jsonstring)
+    if not args.boneyard:
+        #Write the MD5 checksums
+        jsonstring = json.dumps(md5s, indent='\t', separators=(',',':'))
+        with open(outdir + 'md5s.json' + testsuffix, 'w') as f:
+            f.write(jsonstring)
 
-    #Write the host image info
-    jsonstring = json.dumps(hostimgs, indent='\t', separators=(',',':'))
-    with open(outdir + 'hostimgs.json' + testsuffix, 'w') as f:
-        f.write(jsonstring)
+        #Write the host image info
+        if args.collecthosts:
+            jsonstring = json.dumps(hostimgs, indent='\t', separators=(',',':'))
+            with open(outdir + 'hostimgs.json' + testsuffix, 'w') as f:
+                f.write(jsonstring)
 
-    # Things David wants in this file: names (aliases), max mag, max mag date (gregorian), type, redshift, r.a., dec., # obs., link
-    with open(outdir + 'snepages.csv' + testsuffix, 'w') as f:
-        csvout = csv.writer(f, quotechar='"', quoting=csv.QUOTE_ALL)
-        for row in snepages:
-            csvout.writerow(row)
+        # Things David wants in this file: names (aliases), max mag, max mag date (gregorian), type, redshift, r.a., dec., # obs., link
+        with open(outdir + 'snepages.csv' + testsuffix, 'w') as f:
+            csvout = csv.writer(f, quotechar='"', quoting=csv.QUOTE_ALL)
+            for row in snepages:
+                csvout.writerow(row)
 
-    # Make a few small files for generating charts
-    with open(outdir + 'sources.csv' + testsuffix, 'w') as f:
-        sortedsources = sorted(list(sourcedict.items()), key=operator.itemgetter(1), reverse=True)
-        csvout = csv.writer(f)
-        csvout.writerow(['Source','Number'])
-        for source in sortedsources:
-            csvout.writerow(source)
+        # Make a few small files for generating charts
+        with open(outdir + 'sources.csv' + testsuffix, 'w') as f:
+            sortedsources = sorted(list(sourcedict.items()), key=operator.itemgetter(1), reverse=True)
+            csvout = csv.writer(f)
+            csvout.writerow(['Source','Number'])
+            for source in sortedsources:
+                csvout.writerow(source)
 
-    with open(outdir + 'pie.csv' + testsuffix, 'w') as f:
-        csvout = csv.writer(f)
-        csvout.writerow(['Category','Number'])
-        csvout.writerow(['Has light curve and spectra', sum(lcspye)])
-        csvout.writerow(['Has light curve only', sum(lconly)])
-        csvout.writerow(['Has spectra only', sum(sponly)])
-        csvout.writerow(['No light curve or spectra', sum(lcspno)])
+        with open(outdir + 'pie.csv' + testsuffix, 'w') as f:
+            csvout = csv.writer(f)
+            csvout.writerow(['Category','Number'])
+            csvout.writerow(['Has light curve and spectra', sum(lcspye)])
+            csvout.writerow(['Has light curve only', sum(lconly)])
+            csvout.writerow(['Has spectra only', sum(sponly)])
+            csvout.writerow(['No light curve or spectra', sum(lcspno)])
 
-    with open(outdir + 'info-snippets/hasphoto.html' + testsuffix, 'w') as f:
-        f.write("{:,}".format(sum(hasalc)))
-    with open(outdir + 'info-snippets/hasspectra.html' + testsuffix, 'w') as f:
-        f.write("{:,}".format(sum(hasasp)))
-    with open(outdir + 'info-snippets/snecount.html' + testsuffix, 'w') as f:
-        f.write("{:,}".format(len(catalog)))
-    with open(outdir + 'info-snippets/photocount.html' + testsuffix, 'w') as f:
-        f.write("{:,}".format(totalphoto))
-    with open(outdir + 'info-snippets/spectracount.html' + testsuffix, 'w') as f:
-        f.write("{:,}".format(totalspectra))
+        with open(outdir + 'info-snippets/hasphoto.html' + testsuffix, 'w') as f:
+            f.write("{:,}".format(sum(hasalc)))
+        with open(outdir + 'info-snippets/hasspectra.html' + testsuffix, 'w') as f:
+            f.write("{:,}".format(sum(hasasp)))
+        with open(outdir + 'info-snippets/snecount.html' + testsuffix, 'w') as f:
+            f.write("{:,}".format(len(catalog)))
+        with open(outdir + 'info-snippets/photocount.html' + testsuffix, 'w') as f:
+            f.write("{:,}".format(totalphoto))
+        with open(outdir + 'info-snippets/spectracount.html' + testsuffix, 'w') as f:
+            f.write("{:,}".format(totalspectra))
 
-    ctypedict = dict()
-    for entry in catalog:
-        cleanedtype = ''
-        if 'claimedtype' in catalog[entry] and catalog[entry]['claimedtype']:
-            maxsources = 0
-            for ct in catalog[entry]['claimedtype']:
-                sourcecount = len(ct['source'].split(','))
-                if sourcecount > maxsources:
-                    maxsources = sourcecount
-                    cleanedtype = ct['value'].strip('?* ')
-        if not cleanedtype:
-            cleanedtype = 'Unknown'
-        if cleanedtype in ctypedict:
-            ctypedict[cleanedtype] += 1
-        else:
-            ctypedict[cleanedtype] = 1
-    sortedctypes = sorted(list(ctypedict.items()), key=operator.itemgetter(1), reverse=True)
-    with open(outdir + 'types.csv' + testsuffix, 'w') as f:
-        csvout = csv.writer(f)
-        csvout.writerow(['Type','Number'])
-        for ctype in sortedctypes:
-            csvout.writerow(ctype)
+        ctypedict = dict()
+        for entry in catalog:
+            cleanedtype = ''
+            if 'claimedtype' in catalog[entry] and catalog[entry]['claimedtype']:
+                maxsources = 0
+                for ct in catalog[entry]['claimedtype']:
+                    sourcecount = len(ct['source'].split(','))
+                    if sourcecount > maxsources:
+                        maxsources = sourcecount
+                        cleanedtype = ct['value'].strip('?* ')
+            if not cleanedtype:
+                cleanedtype = 'Unknown'
+            if cleanedtype in ctypedict:
+                ctypedict[cleanedtype] += 1
+            else:
+                ctypedict[cleanedtype] = 1
+        sortedctypes = sorted(list(ctypedict.items()), key=operator.itemgetter(1), reverse=True)
+        with open(outdir + 'types.csv' + testsuffix, 'w') as f:
+            csvout = csv.writer(f)
+            csvout.writerow(['Type','Number'])
+            for ctype in sortedctypes:
+                csvout.writerow(ctype)
 
-    with open('../../sitemap.xml', 'w') as f:
-        sitemapxml = sitemaptemplate
-        sitemaplocs = ''
-        for key in catalog.keys():
-            sitemaplocs = sitemaplocs + "  <url>\n    <loc>https://sne.space/sne/" + key + "</loc>\n  </url>\n"
-        sitemapxml = sitemapxml.replace('{0}', sitemaplocs)
-        f.write(sitemapxml)
+        with open('../../sitemap.xml', 'w') as f:
+            sitemapxml = sitemaptemplate
+            sitemaplocs = ''
+            for key in catalog.keys():
+                sitemaplocs = sitemaplocs + "  <url>\n    <loc>https://sne.space/sne/" + key + "</loc>\n  </url>\n"
+            sitemapxml = sitemapxml.replace('{0}', sitemaplocs)
+            f.write(sitemapxml)
 
-    # Ping Google to let them know sitemap has been updated
-    response = urllib.request.urlopen(googlepingurl)
+        # Ping Google to let them know sitemap has been updated
+        response = urllib.request.urlopen(googlepingurl)
 
     # Convert to array since that's what datatables expects
     catalog = list(catalog.values())
 
+    if args.boneyard:
+        catprefix = 'bones'
+    else:
+        catprefix = 'catalog'
+
     jsonstring = json.dumps(catalog, separators=(',',':'))
-    with open(outdir + 'catalog.min.json' + testsuffix, 'w') as f:
+    with open(outdir + catprefix + '.min.json' + testsuffix, 'w') as f:
         f.write(jsonstring)
 
     jsonstring = json.dumps(catalog, indent='\t', separators=(',',':'))
-    with open(outdir + 'catalog.json' + testsuffix, 'w') as f:
+    with open(outdir + catprefix + '.json' + testsuffix, 'w') as f:
         f.write(jsonstring)
 
-    with open(outdir + 'table-templates/catalog.html' + testsuffix, 'w') as f:
+    with open(outdir + 'table-templates/' + catprefix + '.html' + testsuffix, 'w') as f:
         f.write('<table id="example" class="display" cellspacing="0" width="100%">\n')
         f.write('\t<thead>\n')
         f.write('\t\t<tr>\n')
@@ -1731,21 +1755,22 @@ if args.writecatalog and not args.eventlist:
         f.write('\t</tfoot>\n')
         f.write('</table>\n')
 
-    with open(outdir + 'catalog.min.json', 'rb') as f_in, gzip.open(outdir + 'catalog.min.json.gz', 'wb') as f_out:
+    with open(outdir + catprefix + '.min.json', 'rb') as f_in, gzip.open(outdir + catprefix + '.min.json.gz', 'wb') as f_out:
         shutil.copyfileobj(f_in, f_out)
 
-    names = OrderedDict()
-    for ev in catalog:
-        names[ev['name']] = [x['value'] for x in ev['alias']]
-    jsonstring = json.dumps(names, separators=(',',':'))
-    with open(outdir + 'names.min.json' + testsuffix, 'w') as f:
-        f.write(jsonstring)
+    if args.deleteorphans and not args.boneyard:
+        names = OrderedDict()
+        for ev in catalog:
+            names[ev['name']] = [x['value'] for x in ev['alias']]
+        jsonstring = json.dumps(names, separators=(',',':'))
+        with open(outdir + 'names.min.json' + testsuffix, 'w') as f:
+            f.write(jsonstring)
 
-    safefiles = [os.path.basename(x) for x in files]
-    safefiles += ['catalog.json', 'catalog.min.json', 'names.min.json', 'md5s.json', 'hostimgs.json', 'iaucs.json', 'errata.json',
-        'bibauthors.json', 'extinctions.json', 'dupes.json', 'biblio.json', 'atels.json', 'cbets.json', 'conflicts.json', 'hosts.json']
+        safefiles = [os.path.basename(x) for x in files]
+        safefiles += ['catalog.json', 'catalog.min.json', 'bones.json', 'bones.min.json', 'names.min.json', 'md5s.json', 'hostimgs.json', 'iaucs.json', 'errata.json',
+            'bibauthors.json', 'extinctions.json', 'dupes.json', 'biblio.json', 'atels.json', 'cbets.json', 'conflicts.json', 'hosts.json', 'hosts.min.json']
 
-    for myfile in glob('../*.json'):
-        if not os.path.basename(myfile) in safefiles:
-            print ('Deleting orphan ' + myfile)
-            os.remove(myfile)
+        for myfile in glob('../*.json'):
+            if not os.path.basename(myfile) in safefiles:
+                print ('Deleting orphan ' + myfile)
+                #os.remove(myfile)

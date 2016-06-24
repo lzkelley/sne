@@ -45,7 +45,8 @@ def do_ptf(events, stubs, args, tasks, task_obj, log):
                 source = events[name].add_source(bibcode='2012PASP..124..668Y')
                 events[name].add_quantity('alias', alias, source)
             else:
-                events, name = Events.add_event(tasks, args, events, name, log)
+                # events, name = Events.add_event(tasks, args, events, name, log)
+                events, name, source = Events.new_event(bibcode='2012PASP..124..668Y')
 
     with open(os.path.join(PATH.REPO_EXTERNAL, 'PTF/old-ptf-events.csv')) as f:
         for suffix in f.read().splitlines():

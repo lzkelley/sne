@@ -16,12 +16,81 @@ import requests
 import urllib
 
 from scripts import PATH
+from .. constants import TRAVIS_QUERY_LIMIT
 from .. funcs import add_photometry, add_spectrum, \
     event_exists, jd_to_mjd, load_cached_url, \
     make_date_string, uniq_cdl
 from .. import Events
 from .. Events import load_event_from_file
-from scripts.utils import is_number, pbar, pbar_strings, pretty_num, round_sig
+from scripts.utils import is_number, pbar, pbar_strings, pretty_num, round_sig, single_spaces
+
+
+def do_grb(events, stubs, args, tasks, task_obj, log):
+    csvtxt = load_cached_url('http://grb.pa.msu.edu/grbcatalog/download_data?cut_0_min=10&cut_0=BAT%20T90&cut_0_max=100000&num_cuts=1&no_date_cut=True',
+        '../sne-external/GRB-catalog/catalog.csv')
+    if not csvtxt:
+        return events
+    data = csv.reader(csvtxt.splitlines(), delimiter=',', quotechar='"', skipinitialspace = True)
+    for r, row in enumerate(tq(data, currenttask)):
+        if r == 0:
+            continue
+        events, name, source = Events.new_event('GRB ' + row[0], refname = 'Gamma-ray Bursts Catalog', url = 'http://grbcatalog.org')
+        events[name].add_quantity('ra', row[2], source, unit = 'floatdegrees')
+        events[name].add_quantity('dec', row[3], source, unit = 'floatdegrees')
+        events[name].add_quantity('redshift', row[8], source)
+
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+    return events
+
+
+def do_psst(events, stubs, args, tasks, task_obj, log):
+    currenttask = task_obj.current_task(args)
+    # 2016arXiv160204156S
+    with open("../sne-external/2016arXiv160204156S-tab1.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                continue
+            events, name, source = Events.new_event(tasks, args, events, row[0], log,
+                                                    bibcode = '2016arXiv160204156S')
+            events[name].add_quantity('claimedtype', row[3].replace('SN', '').strip('() '), source)
+            events[name].add_quantity('redshift', row[5].strip('() '), source, kind = 'spectroscopic')
+
+    with open("../sne-external/2016arXiv160204156S-tab2.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                continue
+            events, name, source = Events.new_event(tasks, args, events, row[0], log,
+                                                    bibcode = '2016arXiv160204156S')
+            events[name].add_quantity('ra', row[1], source)
+            events[name].add_quantity('dec', row[2], source)
+            mldt = astrotime(float(row[4]), format = 'mjd').datetime
+            discoverdate = make_date_string(mldt.year, mldt.month, mldt.day)
+            events[name].add_quantity('discoverdate', discoverdate, source)
+
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 1606.04795
+    with open("../sne-external/1606.04795.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                continue
+            events, name, source = Events.new_event(row[0], refname = 'Smartt et al. 2016', url = 'http://arxiv.org/abs/1606.04795')
+            events[name].add_quantity('ra', row[1], source)
+            events[name].add_quantity('dec', row[2], source)
+            mldt = astrotime(float(row[3]), format = 'mjd').datetime
+            discoverdate = make_date_string(mldt.year, mldt.month, mldt.day)
+            events[name].add_quantity('discoverdate', discoverdate, source)
+            events[name].add_quantity('claimedtype', row[6], source)
+            events[name].add_quantity('redshift', row[7], source, kind = 'spectroscopic')
+            for alias in [x.strip() for x in row[8].split(',')]:
+                events[name].add_quantity('alias', alias, source)
+
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    return events
 
 
 def do_ascii(events, stubs, args, tasks, task_obj, log):
@@ -224,6 +293,106 @@ def do_ascii(events, stubs, args, tasks, task_obj, log):
                 instrument=ins, telescope=tel, observatory=obs,
                 system='Natural', source=source)
 
+        events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 2014ApJ...783...28G
+    with open("../sne-external/apj490105t2_ascii.txt", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                continue
+            events, name, source = Events.new_event(row[0], bibcode = '2014ApJ...783...28G')
+            events[name].add_quantity('alias', row[1], source)
+            events[name].add_quantity('discoverdate', '20' + row[0][3:5], source)
+            events[name].add_quantity('ra', row[2], source)
+            events[name].add_quantity('dec', row[3], source)
+            events[name].add_quantity('redshift', row[13] if is_number(row[13]) else row[10], source)
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 2005ApJ...634.1190H
+    with open("../sne-external/2005ApJ...634.1190H.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            events, name, source = Events.new_event('SNLS-' + row[0], bibcode = '2005ApJ...634.1190H')
+            events[name].add_quantity('discoverdate', '20' + row[0][:2], source)
+            events[name].add_quantity('ra', row[1], source)
+            events[name].add_quantity('dec', row[2], source)
+            events[name].add_quantity('redshift', row[5].replace('?', ''), source, error = row[6], kind = 'host')
+            events[name].add_quantity('claimedtype', row[7].replace('SN', '').strip(':* '), source)
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 2014MNRAS.444.2133S
+    with open("../sne-external/2014MNRAS.444.2133S.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                continue
+            name = row[0]
+            if is_number(name[:4]):
+                name = 'SN' + name
+            events, name, source = Events.new_event(name, bibcode = '2014MNRAS.444.2133S')
+            events[name].add_quantity('ra', row[1], source)
+            events[name].add_quantity('dec', row[2], source)
+            events[name].add_quantity('redshift', row[3], source, kind = 'host')
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 2009MNRAS.398.1041B
+    with open("../sne-external/2009MNRAS.398.1041B.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                bands = row[2:-1]
+                continue
+            events, name, source = Events.new_event('SN2008S', bibcode = '2009MNRAS.398.1041B')
+            mjd = str(jd_to_mjd(Decimal(row[0])))
+            mags = [x.split('±')[0].strip() for x in row[2:]]
+            upps = [('<' in x.split('±')[0]) for x in row[2:]]
+            errs = [x.split('±')[1].strip() if '±' in x else '' for x in row[2:]]
+
+            instrument = row[-1]
+
+            for mi, mag in enumerate(mags):
+                if not is_number(mag):
+                    continue
+                add_photometry(name, time = mjd, band = bands[mi], magnitude = mag, e_magnitude = errs[mi],
+                    instrument = ins, source = source)
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 2010arXiv1007.0011P
+    with open("../sne-external/2010arXiv1007.0011P.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                bands = row[1:]
+                continue
+            events, name, source = Events.new_event('SN2008S', bibcode = '2010arXiv1007.0011P')
+            mjd = row[0]
+            mags = [x.split('±')[0].strip() for x in row[1:]]
+            errs = [x.split('±')[1].strip() if '±' in x else '' for x in row[1:]]
+
+            for mi, mag in enumerate(mags):
+                if not is_number(mag):
+                    continue
+                add_photometry(name, time = mjd, band = bands[mi], magnitude = mag, e_magnitude = errs[mi],
+                    instrument = 'LBT', source = source)
+    events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+    # 2000ApJ...533..320G
+    with open("../sne-external/2000ApJ...533..320G.tsv", 'r') as f:
+        data = csv.reader(f, delimiter='\t', quotechar='"', skipinitialspace = True)
+        events, name, source = Events.new_event('SN1997cy', bibcode = '2000ApJ...533..320G')
+        for r, row in enumerate(tq(data, currenttask)):
+            if row[0][0] == '#':
+                bands = row[1:-1]
+                continue
+            mjd = str(jd_to_mjd(Decimal(row[0])))
+            mags = row[1:len(bands)]
+            for mi, mag in enumerate(mags):
+                if not is_number(mag):
+                    continue
+                add_photometry(name, time = mjd, band = bands[mi], magnitude = mag,
+                    observatory = 'Mount Stromlo', telescope = 'MSSSO', source = source, kcorrected = True)
+
     events, stubs = Events.journal_events(tasks, args, events, stubs, log)
     return events
 
@@ -345,6 +514,7 @@ def do_cpcs(events, stubs, args, tasks, task_obj, log):
             # Only add events that are classified as SN.
             if event_exists(events, name):
                 continue
+            oldname = name
             events, name = Events.add_event(tasks, args, events, name, log)
         else:
             continue
@@ -352,7 +522,7 @@ def do_cpcs(events, stubs, args, tasks, task_obj, log):
         sec_source = events[name].add_source(
             srcname='Cambridge Photometric Calibration Server',
             url='http://gsaweb.ast.cam.ac.uk/followup/', secondary=True)
-        events[name].add_quantity('alias', name, sec_source)
+        events[name].add_quantity('alias', oldname, sec_source)
         unit_deg = 'floatdegrees'
         events[name].add_quantity('ra', str(alertindex[ii]['ra']), sec_source, unit=unit_deg)
         events[name].add_quantity('dec', str(alertindex[ii]['dec']), sec_source, unit=unit_deg)
@@ -403,12 +573,16 @@ def do_crts(events, stubs, args, tasks, task_obj, log):
             continue
         bs = BeautifulSoup(html, 'html5lib')
         trs = bs.findAll('tr')
-        for tr in pbar(trs, current_task):
+        for tri, tr in enumerate(pbar(trs, current_task)):
             tds = tr.findAll('td')
             if not tds:
                 continue
             # refs = []
             aliases = []
+            crtsname = ''
+            ra = ''
+            dec = ''
+            lclink = ''
             # ttype = ''
             # ctype = ''
             for tdi, td in enumerate(tds):
@@ -443,11 +617,10 @@ def do_crts(events, stubs, args, tasks, task_obj, log):
                             ind = ai-1
                         if '>' in aliases[ind]:
                             hostupper = True
-                        hostmag = aliases[ind].strip('>~').replace(',', '.')
+                        hostmag = aliases[ind].strip('>~').replace(',', '.').replace('m', '.')
                     continue
                 if is_number(alias[:4]) and alias[:2] == '20' and len(alias) > 4:
                     name = 'SN' + alias
-                # lalias = alias.lower()
                 if ((('asassn' in alias and len(alias) > 6) or
                      ('ptf' in alias and len(alias) > 3) or
                      ('ps1' in alias and len(alias) > 3) or 'snhunt' in alias or
@@ -507,6 +680,9 @@ def do_crts(events, stubs, args, tasks, task_obj, log):
                     includeshost=True, telescope=teles, e_magnitude=e_mag, upperlimit=upl)
             if args.update:
                 events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
+        if args.travis and tri > TRAVIS_QUERY_LIMIT:
+            break
 
     events, stubs = Events.journal_events(tasks, args, events, stubs, log)
     return events
@@ -578,7 +754,8 @@ def do_external_radio(events, stubs, args, tasks, task_obj, log):
     current_task = task_obj.current_task(args)
     path_pattern = os.path.join(PATH.REPO_EXTERNAL_RADIO, '*.txt')
     for datafile in pbar_strings(glob(path_pattern), desc=current_task):
-        events, name = Events.add_event(tasks, args, events, os.path.basename(datafile).split('.')[0], log)
+        oldname = os.path.basename(datafile).split('.')[0]
+        events, name = Events.add_event(tasks, args, events, oldname, log)
         radiosourcedict = OrderedDict()
         with open(datafile, 'r') as ff:
             for li, line in enumerate([xx.strip() for xx in ff.read().splitlines()]):
@@ -595,7 +772,7 @@ def do_external_radio(events, stubs, args, tasks, task_obj, log):
                         events, name, time=cols[0], frequency=cols[2], u_frequency='GHz',
                         fluxdensity=cols[3], e_fluxdensity=cols[4], u_fluxdensity='µJy',
                         instrument=cols[5], source=source)
-                    events[name].add_quantity('alias', name, source)
+                    events[name].add_quantity('alias', oldname, source)
 
     events, stubs = Events.journal_events(tasks, args, events, stubs, log)
     return events
@@ -605,7 +782,8 @@ def do_external_xray(events, stubs, args, tasks, task_obj, log):
     current_task = task_obj.current_task(args)
     path_pattern = os.path.join(PATH.REPO_EXTERNAL_XRAY, '*.txt')
     for datafile in pbar_strings(glob(path_pattern), desc=current_task):
-        events, name = Events.add_event(tasks, args, events, os.path.basename(datafile).split('.')[0], log)
+        oldname = os.path.basename(datafile).split('.')[0]
+        events, name = Events.add_event(tasks, args, events, oldname, log)
         with open(datafile, 'r') as ff:
             for li, line in enumerate(ff.read().splitlines()):
                 if li == 0:
@@ -620,7 +798,7 @@ def do_external_xray(events, stubs, args, tasks, task_obj, log):
                         unabsorbedflux=cols[8], u_flux='ergs/ss/cm^2',
                         photonindex=cols[15], instrument=cols[17], nhmw=cols[11],
                         upperlimit=(float(cols[5]) < 0), source=source)
-                    events[name].add_quantity('alias', name, source)
+                    events[name].add_quantity('alias', oldname, source)
 
     events, stubs = Events.journal_events(tasks, args, events, stubs, log)
     return events
@@ -756,22 +934,22 @@ def do_itep(events, stubs, args, tasks, task_obj, log):
     for rr, row in enumerate(pbar(tsvin, current_task)):
         if rr <= 1 or len(row) < 7:
             continue
-        name = 'SN' + row[0].strip()
+        oldname = 'SN' + row[0].strip()
         mjd = str(jd_to_mjd(Decimal(row[1].strip())))
         band = row[2].strip()
         magnitude = row[3].strip()
         e_magnitude = row[4].strip()
         reference = row[6].strip().strip(',')
 
-        if curname != name:
-            curname = name
-            events, name = Events.add_event(tasks, args, events, name, log)
+        if curname != oldname:
+            curname = oldname
+            events, name = Events.add_event(tasks, args, events, oldname, log)
 
             sec_reference = 'Sternberg Astronomical Institute Supernova Light Curve Catalogue'
             sec_refurl = 'http://dau.itep.ru/sn/node/72'
             sec_source = events[name].add_source(
                 refname=sec_reference, url=sec_refurl, secondary=True)
-            events[name].add_quantity('alias', name, sec_source)
+            events[name].add_quantity('alias', oldname, sec_source)
 
             year = re.findall(r'\d+', name)[0]
             events[name].add_quantity('discoverdate', year, sec_source)
@@ -866,13 +1044,13 @@ def do_sdss(events, stubs, args, tasks, task_obj, log):
         for rr, row in enumerate(tsvin):
             if rr == 0:
                 if row[5] == 'RA:':
-                    name = 'SDSS-II ' + row[3]
+                    name = 'SDSS-II SN ' + row[3]
                 else:
                     name = 'SN' + row[5]
                 events, name = Events.add_event(tasks, args, events, name, log)
                 source = events[name].add_source(bibcode=bibcode)
                 events[name].add_quantity('alias', name, source)
-                events[name].add_quantity('alias', 'SDSS-II ' + row[3], source)
+                events[name].add_quantity('alias', 'SDSS-II SN ' + row[3], source)
 
                 if row[5] != 'RA:':
                     year = re.findall(r'\d+', name)[0]
@@ -1024,7 +1202,7 @@ def do_superfit_spectra(events, stubs, args, tasks, task_obj, log):
                 epoff = ''
 
             source = events[name].add_source(srcname='Superfit', url=superfit_url, secondary=True)
-            events[name].add_quantity('alias', name, source)
+            events[name].add_quantity('alias', oldname, source)
 
             with open(sffile) as ff:
                 rows = ff.read().splitlines()
@@ -1138,23 +1316,63 @@ def do_tns(events, stubs, args, tasks, task_obj, log):
     events, stubs = Events.journal_events(tasks, args, events, stubs, log)
     return events
 
-'''
+
 def do_simbad(events, stubs, args, tasks, task_obj, log):
-    Simbad.list_votable_fields()
+    #Simbad.list_votable_fields()
+    # Some coordinates that SIMBAD claims belong to the SNe actually belong to the host.
+    simbadmirrors = ['http://simbad.harvard.edu/simbad/sim-script', 'http://simbad.u-strasbg.fr/simbad/sim-script']
+    simbadbadcoordbib = ['2013ApJ...770..107C']
+    simbadbadnamebib = ['2004AJ....127.2809W', '2005MNRAS.364.1419Z', '2015A&A...574A.112D', '2011MNRAS.417..916G', '2002ApJ...566..880G']
+    simbadbannedcats = ['[TBV2008]', 'OGLE-MBR']
     customSimbad = Simbad()
-    customSimbad.add_votable_fields('otype', 'id(opt)')
-    result = customSimbad.query_object('SN 20[0-9][0-9]*', wildcard=True)
-    for rr, row in enumerate(result):
-        if row['OTYPE'].decode() != 'SN':
+    customSimbad.ROW_LIMIT = -1
+    customSimbad.TIMEOUT = 120
+    customSimbad.add_votable_fields('otype', 'sptype', 'sp_bibcode', 'id')
+    for mirror in simbadmirrors:
+        customSimbad.SIMBAD_URL = mirror
+        try:
+            table = customSimbad.query_criteria('maintype=SN | maintype="SN?"')
+        except:
             continue
-        name = row['MAIN_ID'].decode()
-        aliases = Simbad.query_objectids(name)
-        print(aliases)
-        if name[:3] == 'SN ':
-            name = 'SN' + name[3:]
-        if name[:2] == 'SN' and is_number(name[2:]):
-            name = name + 'A'
+        else:
+            break
+
+    # 2000A&AS..143....9W
+    for brow in tq(table, currenttask = currenttask):
+        row = {x:re.sub(r'b\'(.*)\'', r'\1', str(brow[x])) for x in brow.colnames}
+        # Skip items with no bibliographic info aside from SIMBAD, too error-prone
+        if row['OTYPE'] == 'Candidate_SN*' and not row['SP_TYPE']:
+            continue
+        if not row['COO_BIBCODE'] and not row['SP_BIBCODE'] and not row['SP_BIBCODE_2']:
+            continue
+        if any([x in row['MAIN_ID'] for x in simbadbannedcats]):
+            continue
+        if row['COO_BIBCODE'] and row['COO_BIBCODE'] in simbadbadnamebib:
+            continue
+        name = single_spaces(re.sub(r'\[[^)]*\]', '', row['MAIN_ID']).strip())
+        if name == 'SN':
+            continue
+        if is_number(name):
+            continue
         events, name = Events.add_event(tasks, args, events, name, log)
+        source = events[name].add_source(refname = 'SIMBAD astronomical database', bibcode = "2000A&AS..143....9W",
+            url = "http://simbad.u-strasbg.fr/", secondary = True)
+        aliases = row['ID'].split(',')
+        for alias in aliases:
+            if any([x in alias for x in simbadbannedcats]):
+                continue
+            ali = single_spaces(re.sub(r'\[[^)]*\]', '', alias).strip())
+            if is_number(ali):
+                continue
+            ali = name_clean(ali)
+            events[name].add_quantity('alias', ali, source)
+        if row['COO_BIBCODE'] and row['COO_BIBCODE'] not in simbadbadcoordbib:
+            csources = ','.join([source, events[name].add_source(bibcode = row['COO_BIBCODE'])])
+            events[name].add_quantity('ra', row['RA'], csources)
+            events[name].add_quantity('dec', row['DEC'], csources)
+        if row['SP_BIBCODE']:
+            ssources = uniq_cdl([source, events[name].add_source(bibcode = row['SP_BIBCODE'])] +
+                ([events[name].add_source(bibcode = row['SP_BIBCODE_2'])] if row['SP_BIBCODE_2'] else []))
+            events[name].add_quantity('claimedtype', row['SP_TYPE'].replace('SN.', '').replace('SN', '').replace('(~)', '').strip(': '), ssources)
     events, stubs = Events.journal_events(tasks, args, events, stubs, log)
     return events
-'''

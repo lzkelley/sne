@@ -71,19 +71,20 @@ def do_ps_threepi(events, stubs, args, tasks, task_obj, log):
     oldnumpages = len(glob(os.path.join(PATH.REPO_EXTERNAL, '3pi/page*')))
     for page in pbar(range(1, numpages), current_task):
         fname = os.path.join(PATH.REPO_EXTERNAL, '3pi/page') + str(page).zfill(2) + '.html'
-        if ((task_obj.load_archive(args) and
-             os.path.isfile(fname) and page < oldnumpages)):
+        if offline:
+            if not os.path.isfile(fname):
+                continue
             with open(fname, 'r') as f:
                 html = f.read()
-        elif not offline:
-            use_url = ('http://psweb.mp.qub.ac.uk/ps1threepi/psdb/public/?page=' + str(page) +
-                       '&sort=followup_flag_date')
-            response = urllib.request.urlopen(use_url)
-            with open(fname, 'w') as f:
-                html = response.read().decode('utf-8')
-                f.write(html)
         else:
-            continue
+            if not args.fullrefresh and task_obj.load_archive(args) and page < oldnumpages and os.path.isfile(fname) :
+                with open(fname, 'r') as f:
+                    html = f.read()
+            else:
+                response = urllib.request.urlopen("http://psweb.mp.qub.ac.uk/ps1threepi/psdb/public/?page=" + str(page) + "&sort=followup_flag_date")
+                with open(fname, 'w') as f:
+                    html = response.read().decode('utf-8')
+                    f.write(html)
 
         bs = BeautifulSoup(html, 'html5lib')
         trs = bs.findAll('tr')
@@ -153,17 +154,30 @@ def do_ps_threepi(events, stubs, args, tasks, task_obj, log):
 
             fname2 = os.path.join(PATH.REPO_EXTERNAL, '3pi/candidate-')
             fname2 += pslink.rstrip('/').split('/')[-1] + '.html'
-            if task_obj.load_archive(args) and os.path.isfile(fname2):
+            if offline:
+                if not os.path.isfile(fname2):
+                    continue
                 with open(fname2, 'r') as f:
                     html2 = f.read()
-            elif not offline:
-                pslink = 'http://psweb.mp.qub.ac.uk/ps1threepi/psdb/public/' + pslink
-                with open(fname2, 'w') as f:
-                    response2 = urllib.request.urlopen(pslink)
-                    html2 = response2.read().decode('utf-8')
-                    f.write(html2)
             else:
-                continue
+                if task_obj.load_archive(args) and os.path.isfile(fname2):
+                    with open(fname2, 'r') as f:
+                        html2 = f.read()
+                else:
+                    pslink = 'http://psweb.mp.qub.ac.uk/ps1threepi/psdb/public/' + pslink
+                    try:
+                        session2 = requests.Session()
+                        response2 = session2.get(pslink)
+                    except:
+                        offline = True
+                        if not os.path.isfile(fname2):
+                            continue
+                        with open(fname2, 'r') as f:
+                            html2 = f.read()
+                    else:
+                        html2 = response2.text
+                        with open(fname2, 'w') as f:
+                            f.write(html2)
 
             bs2 = BeautifulSoup(html2, 'html5lib')
             scripts = bs2.findAll('script')
@@ -215,6 +229,10 @@ def do_ps_threepi(events, stubs, args, tasks, task_obj, log):
                 events[name].add_quantity('redshift', redshift, source, kind='host')
             if args.update:
                 events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+
         events, stubs = Events.journal_events(tasks, args, events, stubs, log)
+        # Only run first page for Travis
+        if args.travis:
+            break
 
     return events

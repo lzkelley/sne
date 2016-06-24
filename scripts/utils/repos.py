@@ -9,13 +9,15 @@ __all__ = ['repo_file_list', 'get_repo_folder_for_year', 'get_repo_folders', 'ge
            'get_repo_years']
 
 
-def repo_file_list(bones=True):
+def repo_file_list(normal=True, bones=True):
     """Get filenames for all files in each repository, with `boneyard` files optional.
     """
     repo_folders = get_repo_folders()
     files = []
     for rep in repo_folders:
         rep_path = os.path.join(PATH.ROOT, rep)
+        if not 'boneyard' in rep and not normal:
+            continue
         if not bones and 'boneyard' in rep:
             continue
         # files += glob('../' + rep + "/*.json") + glob('../' + rep + "/*.json.gz")
@@ -31,8 +33,8 @@ def get_repo_folder_for_year(entry):
     if 'discoverdate' not in entry:
         return repo_folders[0]
     if not is_number(entry['discoverdate'][0]['value'].split('/')[0]):
-        raise ValueError('Discovery year is not a number!')
-        sys.exit()
+        warnings.warn('Discovery year is not a number')
+        return repofolders[0]
 
     repo_years = get_repo_years(repo_folders)
     for r, repoyear in enumerate(repo_years):

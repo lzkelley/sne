@@ -18,6 +18,10 @@
 -   `write_all_events`: save `non_sne_types` data somewhere instead of reloading each time
     -   Move all of the stuff inside the names loop into the EVENT class.
 -   Change 'writevents' from a task to an argument parameter?  (e.g. for `journal_events`)
+-   Combine `EVENT.check` with `Events.clean_event`
+-   `load_cached_url` add warnings for failures
+-   Have the different `add_` methods accept lists and add each
+    
     
 ## Questions ##
 -   What is `import_funcs.clear_events` doing?

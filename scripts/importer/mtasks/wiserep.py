@@ -12,9 +12,9 @@ import warnings
 from astropy.time import Time as astrotime
 
 from scripts import PATH
+from .. constants import TRAVIS_QUERY_LIMIT
 from .. import Events
 from .. funcs import add_spectrum, uniq_cdl, get_preferred_name
-from .. constants import TRAVIS_QUERY_LIMIT
 from ... utils import pbar, pbar_strings, is_number, tprint
 
 
@@ -100,10 +100,12 @@ def do_wiserep_spectra(events, stubs, args, tasks, task_obj, log):
                                                             del tfiles[fi]
                                                             lfiles = deepcopy(tfiles)
                                                             raise StopIteration
+                                        except (KeyboardInterrupt, SystemExit):
+                                            raise
                                         except StopIteration:
                                             pass
-                                        if not specpath:
-                                            warnings.warn('Spectrum file not found, '' + specfile + ''')
+                                        #if not specpath:
+                                            #    warnings.warn('Spectrum file not found, "' + specfile + '"')
                                     else:
                                         continue
                         if 'Spec Type:</span>' in str(tr.contents) and produceoutput:

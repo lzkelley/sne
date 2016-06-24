@@ -8,11 +8,11 @@ from math import floor
 import os
 import warnings
 
-from scripts import FILENAME, PATH
+from scripts import FILENAME, PATH, SCHEMA
 from .constants import COMPRESS_ABOVE_FILESIZE, NON_SNE_PREFIXES, \
-    OSC_BIBCODE, OSC_NAME, OSC_URL, REPR_BETTER_QUANTITY
+    OSC_BIBCODE, OSC_NAME, OSC_URL, REPR_BETTER_QUANTITY, TRAVIS_QUERY_LIMIT
 from .funcs import copy_to_event, get_atels_dict, get_cbets_dict, get_iaucs_dict, \
-    jd_to_mjd, name_clean
+    jd_to_mjd, name_clean, host_clean, radec_clean
 from ..utils import get_repo_folders, get_repo_years, get_repo_paths, get_sig_digits, is_number, \
     pbar, pretty_num, tprint, zpad, repo_file_list
 
@@ -26,6 +26,7 @@ class KEYS:
     ERRORS = 'errors'
     NAME = 'name'
     SOURCES = 'sources'
+    SCHEMA = 'schema'
     URL = 'url'
 
 
@@ -150,17 +151,18 @@ class EVENT(OrderedDict):
 
         return source_alias
 
-    def add_quantity(self, quantity, value, sources, forcereplacebetter=False,
-                     lowerlimit='', upperlimit='', error='', unit='', kind='', extra=''):
+    def add_quantity(self, quantity, value, sources, forcereplacebetter=False, derived='',
+                     lowerlimit='', upperlimit='', error='', unit='', kind='', extra='', probability=''):
         """
         """
         if not quantity:
-            raise ValueError('Quantity must be specified for add_quantity.')
+            raise(ValueError(self.name + "'s quantity must be specified for add_quantity."))
         if not sources:
-            raise ValueError('Source must be specified for quantity before it is added.')
+            raise(ValueError(self.name + "'s source must be specified for quantity " +
+                quantity + ' before it is added.'))
         if ((not isinstance(value, str) and
              (not isinstance(value, list) or not isinstance(value[0], str)))):
-            raise ValueError('Quantity must be a string or an array of strings.')
+            raise(ValueError(self.name + "'s Quantity " + quantity + " must be a string or an array of strings."))
 
         if self.is_erroneous(quantity, sources):
             return None
@@ -170,12 +172,13 @@ class EVENT(OrderedDict):
         svalue = value.strip()
         serror = error.strip()
         skind = kind.strip()
+        sprob = probability.strip()
         sunit = ''
 
         if not svalue or svalue == '--' or svalue == '-':
             return
         if serror and (not is_number(serror) or float(serror) < 0):
-            raise ValueError('Quanta error value must be a number and positive.')
+            raise(ValueError(self.name + "'s quanta " + quantity + ' error value must be a number and positive.'))
 
         # Set default units
         if not unit and quantity == 'velocity':
@@ -202,57 +205,19 @@ class EVENT(OrderedDict):
                 return
             if svalue.lower() in ['anonymous', 'anon.', 'anon', 'intergalactic']:
                 return
-            if svalue.startswith('M ') and is_number(svalue[2:]):
-                svalue.replace('M ', 'M', 1)
-            svalue = svalue.strip("()").replace('  ', ' ', 1)
-            svalue = svalue.replace("Abell", "Abell ", 1)
-            svalue = svalue.replace("APMUKS(BJ)", "APMUKS(BJ) ", 1)
-            svalue = svalue.replace("ARP", "ARP ", 1)
-            svalue = svalue.replace("CGCG", "CGCG ", 1)
-            svalue = svalue.replace("HOLM", "HOLM ", 1)
-            svalue = svalue.replace("IC", "IC ", 1)
-            svalue = svalue.replace("Intergal.", "Intergalactic", 1)
-            svalue = svalue.replace("MCG+", "MCG +", 1)
-            svalue = svalue.replace("MCG-", "MCG -", 1)
-            svalue = svalue.replace("M+", "MCG +", 1)
-            svalue = svalue.replace("M-", "MCG -", 1)
-            svalue = svalue.replace("MGC ", "MCG ", 1)
-            svalue = svalue.replace("Mrk", "MRK", 1)
-            svalue = svalue.replace("MRK", "MRK ", 1)
-            svalue = svalue.replace("NGC", "NGC ", 1)
-            svalue = svalue.replace("PGC", "PGC ", 1)
-            svalue = svalue.replace("SDSS", "SDSS ", 1)
-            svalue = svalue.replace("UGC", "UGC ", 1)
-            if len(svalue) > 4 and svalue.startswith("PGC "):
-                svalue = svalue[:4] + svalue[4:].lstrip(" 0")
-            if len(svalue) > 4 and svalue.startswith("UGC "):
-                svalue = svalue[:4] + svalue[4:].lstrip(" 0")
-            if len(svalue) > 5 and svalue.startswith(("MCG +", "MCG -")):
-                svalue = svalue[:5] + '-'.join([x.zfill(2) for x in svalue[5:].strip().split("-")])
-            if len(svalue) > 5 and svalue.startswith("CGCG "):
-                svalue = svalue[:5] + '-'.join([x.zfill(3) for x in svalue[5:].strip().split("-")])
-            if (((len(svalue) > 1 and svalue.startswith("E")) or
-                 (len(svalue) > 3 and svalue.startswith('ESO')))):
-                if svalue[0] == "E":
-                    esplit = svalue[1:].split("-")
-                else:
-                    esplit = svalue[3:].split("-")
-                if len(esplit) == 2 and is_number(esplit[0].strip()):
-                    if esplit[1].strip()[0] == 'G':
-                        parttwo = esplit[1][1:].strip()
-                    else:
-                        parttwo = esplit[1].strip()
-                    if is_number(parttwo.strip()):
-                        svalue = 'ESO ' + esplit[0].lstrip('0') + '-G' + parttwo.lstrip('0')
-            svalue = ' '.join(svalue.split())
 
-            is_abell = svalue.lower().startswith('abell') and is_number(svalue[5:].strip())
-            if not skind and (is_abell or 'cluster' in svalue.lower()):
+            svalue = host_clean(svalue)
+
+            if (not skind and ((svalue.lower().startswith('abell') and is_number(svalue[5:].strip())) or
+                'cluster' in svalue.lower())):
                 skind = 'cluster'
-
+                if not skind and (is_abell or 'cluster' in svalue.lower()):
+                    skind = 'cluster'
         elif quantity == KEYS.CLAIMED_TYPE:
             isq = False
             svalue = svalue.replace('young', '')
+            if svalue.lower() in ['unknown', 'unk', '?', '-']:
+                return
             if '?' in svalue:
                 isq = True
                 svalue = svalue.strip(' ?')
@@ -264,64 +229,12 @@ class EVENT(OrderedDict):
                 svalue = svalue + '?'
 
         elif quantity in ['ra', 'dec', 'hostra', 'hostdec']:
-            if unit == 'floatdegrees':
-                deg = float('%g' % Decimal(svalue))
-                sig = get_sig_digits(svalue)
-                if 'ra' in quantity:
-                    flhours = deg / 360.0 * 24.0
-                    hours = floor(flhours)
-                    minutes = floor((flhours - hours) * 60.0)
-                    seconds = (flhours * 60.0 - (hours * 60.0 + minutes)) * 60.0
-                    if seconds > 60.0:
-                        raise ValueError('Invalid seconds value for ' + quantity)
-                    svalue = (str(hours).zfill(2) + ':' + str(minutes).zfill(2) + ':' +
-                              zpad(pretty_num(seconds, sig=sig-1)))
-                elif 'dec' in quantity:
-                    fldeg = abs(deg)
-                    degree = floor(fldeg)
-                    minutes = floor((fldeg - degree) * 60.0)
-                    seconds = (fldeg * 60.0 - (degree * 60.0 + minutes)) * 60.0
-                    if seconds > 60.0:
-                        raise ValueError('Invalid seconds value for ' + quantity)
-                    svalue = '+' if deg >= 0.0 else '-'
-                    svalue += (str(degree).strip('+-').zfill(2) + ':' +
-                               str(minutes).zfill(2) + ':' + zpad(pretty_num(seconds, sig=sig-1)))
-            elif unit == 'nospace' and 'ra' in quantity:
-                svalue = (svalue[:2] + ':' + svalue[2:4] +
-                          ((':' + zpad(svalue[4:])) if len(svalue) > 4 else ''))
-            elif unit == 'nospace' and 'dec' in quantity:
-                if svalue.startswith(('+', '-')):
-                    svalue = (svalue[:3] + ':' + svalue[3:5] +
-                              ((':' + zpad(svalue[5:])) if len(svalue) > 5 else ''))
-                else:
-                    svalue = ('+' + svalue[:2] + ':' + svalue[2:4] +
-                              ((':' + zpad(svalue[4:])) if len(svalue) > 4 else ''))
-            else:
-                svalue = svalue.replace(' ', ':')
-                if 'dec' in quantity:
-                    valuesplit = svalue.split(':')
-                    svalue = (('-' if valuesplit[0].startswith('-') else '+') +
-                              valuesplit[0].strip('+-').zfill(2) +
-                              (':' + valuesplit[1].zfill(2) if len(valuesplit) > 1 else '') +
-                              (':' + zpad(valuesplit[2]) if len(valuesplit) > 2 else ''))
-
-            if 'ra' in quantity:
-                sunit = 'hours'
-            elif 'dec' in quantity:
-                sunit = 'degrees'
-
-            # Correct case of arcseconds = 60.0.
-            valuesplit = svalue.split(':')
-            if len(valuesplit) == 3 and valuesplit[-1] in ["60.0", "60.", "60"]:
-                svalue = (valuesplit[0] + ':' + str(Decimal(valuesplit[1]) +
-                          Decimal(1.0)) + ':' + "00.0")
-
-            # Strip trailing dots.
-            svalue = svalue.rstrip('.')
-
+            (svalue, sunit) = radec_clean(svalue, quantity, unit = unit)
         elif quantity == 'maxdate' or quantity == 'discoverdate':
             # Make sure month and day have leading zeroes
             sparts = svalue.split('/')
+            if len(sparts[0]) > 4 and int(sparts[0]) > 0:
+                raise ValueError('Date years limited to four digits.')
             if len(sparts) >= 2:
                 svalue = sparts[0] + '/' + sparts[1].zfill(2)
             if len(sparts) == 3:
@@ -346,6 +259,8 @@ class EVENT(OrderedDict):
                         my_quantity_list[ii]['source'] += ',' + source
                         if serror and 'error' not in my_quantity_list[ii]:
                             my_quantity_list[ii]['error'] = serror
+                        if sprob and 'probability' not in my_quantity_list[ii]:
+                            my_quantity_list[ii]['probability'] = sprob
                 return
 
         if not sunit:
@@ -359,12 +274,16 @@ class EVENT(OrderedDict):
             quanta_entry['source'] = sources
         if skind:
             quanta_entry['kind'] = skind
+        if sprob:
+            quantaentry['probability'] = sprob
         if sunit:
             quanta_entry['unit'] = sunit
         if lowerlimit:
             quanta_entry['lowerlimit'] = lowerlimit
         if upperlimit:
             quanta_entry['upperlimit'] = upperlimit
+        if derived:
+            quantaentry['derived'] = derived
         if extra:
             quanta_entry['extra'] = extra
         if (forcereplacebetter or quantity in REPR_BETTER_QUANTITY) and len(my_quantity_list):
@@ -484,6 +403,9 @@ class EVENT(OrderedDict):
         raise ValueError("Source '{}': alias '{}' not found!".format(self.name, alias))
 
     def check(self):
+        # Make sure there is a schema key in dict
+        if KEYS.SCHEMA not in self.keys():
+            self[KEYS.SCHEMA] = SCHEMA.URL
         # Make sure there is a name key in dict
         if KEYS.NAME not in self.keys():
             self[KEYS.NAME] = self.name
@@ -542,7 +464,7 @@ class EVENT(OrderedDict):
         return stub
 
 
-def add_event(tasks, args, events, name, log, load=True, delete=True, source=''):
+def add_event(tasks, args, events, name, log, load=True, delete=True):
     """Find an existing event in, or add a new one to, the `events` dict.
 
     FIX: rename to `create_event`???
@@ -576,13 +498,23 @@ def add_event(tasks, args, events, name, log, load=True, delete=True, source='')
 
     # Create new event
     new_event = EVENT(newname)
+    new_event['schema'] = SCHEMA.URL
     log.log(log._LOADED, "Created new, empty event for '{}'".format(newname))
-    if source:
-        new_event.add_quantity('alias', newname, source)
     # Add event to dictionary
     events[newname] = new_event
 
     return events, newname
+
+
+def new_event(tasks, args, events, name, log, load = True, delete = True, loadifempty = True,
+              refname = '', reference = '', url = '', bibcode = '', secondary = '', acknowledgment = ''):
+    oldname = name
+    events, name = add_event(tasks, args, events, name, load = load, delete = delete)
+    source = events[name].add_source(name, bibcode=bibcode, refname=refname, reference=reference,
+                                     url=url, secondary = secondary, acknowledgment = acknowledgment)
+    events[name].add_quantity('alias', oldname, source)
+    return events, name, source
+
 
 
 def find_event_name_of_alias(events, alias):
@@ -657,7 +589,7 @@ def clean_event(dirty_event):
 
     # Go through all keys in 'dirty' event
     for key in dirty_event.keys():
-        if key in [KEYS.NAME, KEYS.SOURCES, KEYS.ERRORS]:
+        if key in [KEYS.NAME, KEYS.SCHEMA, KEYS.SOURCES, KEYS.ERRORS]:
             pass
         elif key == 'photometry':
             for p, photo in enumerate(dirty_event['photometry']):
@@ -704,8 +636,10 @@ def journal_events(tasks, args, events, stubs, log, clear=True, gz=False, bury=F
     # NOTE: this needs to use a `list` wrapper to allow modification of dictionary
     for name in list(events.keys()):
         if 'writeevents' in tasks:
-            # See if this event should be burried
-            # Delete non-SN events here without IAU designations (those with only banned types)
+            # See if this event should be buried
+
+            # Bury non-SN events here if only claimed type is non-SN type, or if primary
+            # name starts with a non-SN prefix.
             buryevent = False
             save_event = True
             ct_val = None
@@ -714,8 +648,7 @@ def journal_events(tasks, args, events, stubs, log, clear=True, gz=False, bury=F
                     log.debug("Killing '{}', non-SNe prefix.".format(name))
                     save_event = False
                 else:
-                    has_sn_name = name.startswith('SN') and is_number(name[2:6])
-                    if KEYS.CLAIMED_TYPE in events[name] and not has_sn_name:
+                    if KEYS.CLAIMED_TYPE in events[name]:
                         for ct in events[name][KEYS.CLAIMED_TYPE]:
                             up_val = ct['value'].upper()
                             if up_val not in non_sne_types and up_val != 'CANDIDATE':
@@ -849,19 +782,15 @@ def merge_duplicates(tasks, args, events):
             continue
         # allnames1 = events[name1].get_aliases() + (['AT' + name1[2:]] if
         #     (name1.startswith('SN') and is_number(name1[2:6])) else [])
-        allnames1 = events[name1].get_aliases()
-        if name1.startswith('SN') and is_number(name1[2:6]):
-            allnames1 += ['AT' + name1[2:]]
+        allnames1 = set(events[name1].get_aliases(name1) + (['AT' + name1[2:]] if (name1.startswith('SN') and is_number(name1[2:6])) else []))
 
         for name2 in keys[n1+1:]:
             if name2 not in events or name1 == name2:
                 continue
             # allnames2 = events[name2].get_aliases() + (['AT' + name2[2:]]
             #    if (name2.startswith('SN') and is_number(name2[2:6])) else [])
-            allnames2 = events[name2].get_aliases()
-            if name2.startswith('SN') and is_number(name2[2:6]):
-                allnames2 += ['AT' + name2[2:]]
-            if any(ii in allnames1 for ii in allnames2):
+            allnames2 = set(events[name2].get_aliases(name2) + (['AT' + name2[2:]] if (name2.startswith('SN') and is_number(name2[2:6])) else []))
+            if bool(allnames1 & allnames2):
                 tprint("Found single event with multiple entries ('{}' and '{}'), merging.".format(
                     name1, name2))
 
@@ -870,10 +799,10 @@ def merge_duplicates(tasks, args, events):
                 if load1 and load2:
                     priority1 = 0
                     priority2 = 0
-                    for an in allnames1:
+                    for an in list(allnames1):
                         if len(an) >= 2 and an.startswith(('SN', 'AT')):
                             priority1 = priority1 + 1
-                    for an in allnames2:
+                    for an in list(allnames2):
                         if len(an) >= 2 and an.startswith(('SN', 'AT')):
                             priority2 = priority2 + 1
 
@@ -888,15 +817,18 @@ def merge_duplicates(tasks, args, events):
                 else:
                     print('Duplicate already deleted')
                 journal_events(tasks, args, events)
+        if args.travis and n1 > TRAVIS_QUERY_LIMIT:
+            break
 
     return events
 
 
 def set_preferred_names(tasks, args, events):
+    currenttask = 'Setting preferred names'
     if not len(events):
         load_stubs(tasks, args, events)
 
-    for name in list(sorted(list(events.keys()))):
+    for ni, name in pbar(list(sorted(list(events.keys()))), currenttask):
         if name not in events:
             continue
         newname = ''
@@ -959,6 +891,8 @@ def set_preferred_names(tasks, args, events):
                 events[newname][KEYS.NAME] = newname
                 del events[name]
                 journal_events(tasks, args, events)
+        if args.travis and ni > TRAVIS_QUERY_LIMIT:
+            break
 
     return events
 

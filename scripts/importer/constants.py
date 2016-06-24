@@ -34,7 +34,7 @@ MAX_BANDS = [
 
 PREF_KINDS = ['heliocentric', 'cmb', 'spectroscopic', 'photometric', 'host', 'cluster', '']
 
-NON_SNE_PREFIXES = ['PNVJ', 'PNV J', 'OGLE-2013-NOVA']
+NON_SNE_PREFIXES = ['PNVJ', 'PNV J', 'OGLE-2013-NOVA', 'EV*', 'V*', 'Nova']
 
 
 class TASK:
@@ -79,7 +79,7 @@ class TASK:
         if not self.archived:
             return False
         # If we're running in 'archived' mode, and only loading 'archived' things, then True
-        if args.archived:
+        if args.archived not in args.refresh_list and not args.full_refresh:
             return True
         # For normal running, if we are not sepcifically refreshing this task, then True
         if self.name not in args.refresh_list and not args.full_refresh:
